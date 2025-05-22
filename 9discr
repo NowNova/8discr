@@ -1,0 +1,231 @@
+import matplotlib
+
+# matplotlib.use('TkAgg')
+import networkx as nx
+import matplotlib.pyplot as plt
+from collections import deque
+
+class BipartiteGraph:
+    def __init__(self, edges):
+        self.edges = edges
+        self.graph = nx.Graph()
+        self.graph.add_edges_from(edges)
+        self.left = set()
+        self.right = set()
+        self.is_bipartite = True
+        self.removed_edges = []
+
+    def check_bipartite(self):
+        """Проверяет, является ли граф двудольным с помощью BFS"""
+        color = {}
+        queue = deque()
+
+        # Выбираем начальную вершину (первую из первого ребра)
+        start_node = self.edges[0][0]
+        color[start_node] = 0
+        queue.append(start_node)
+        self.left.add(start_node)
+
+        while queue and self.is_bipartite:
+            u = queue.popleft()
+            for v in self.graph.neighbors(u):
+                if v not in color:
+                    color[v] = 1 - color[u]
+                    if color[v] == 0:
+                        self.left.add(v)
+                    else:
+                        self.right.add(v)
+                    queue.append(v)
+                elif color[v] == color[u]:
+                    self.is_bipartite = False
+                    break
+
+        return self.is_bipartite
+
+    def make_bipartite(self):
+        """Удаляет минимальное число ребер, чтобы сделать граф двудольным"""
+        if self.check_bipartite():
+            return self.edges
+
+        # Используем жадный алгоритм для удаления минимального числа ребер
+        color = {}
+        removed_edges = []
+        graph_copy = self.graph.copy()
+
+        # Пытаемся раскрасить граф, удаляя конфликтные ребра
+        for u in self.graph.nodes():
+            if u not in color:
+                queue = deque([u])
+                color[u] = 0
+                self.left.add(u)
+
+                while queue:
+                    current = queue.popleft()
+                    for v in list(graph_copy.neighbors(current)):
+                        if v not in color:
+                            color[v] = 1 - color[current]
+                            if color[v] == 0:
+                                self.left.add(v)
+                            else:
+                                self.right.add(v)
+                            queue.append(v)
+                        elif color[v] == color[current]:
+                            # Нашли конфликтное ребро, удаляем его
+                            if (current, v) in graph_copy.edges():
+                                graph_copy.remove_edge(current, v)
+                                removed_edges.append((current, v))
+                            elif (v, current) in graph_copy.edges():
+                                graph_copy.remove_edge(v, current)
+                                removed_edges.append((v, current))
+
+        # Обновляем граф и сохраняем удаленные ребра
+        self.graph = graph_copy
+        self.removed_edges = removed_edges
+        self.is_bipartite = True
+        return removed_edges
+
+    def ford_fulkerson(self):
+        """Реализация алгоритма Форда-Фалкерсона для поиска максимального паросочетания"""
+        if not self.is_bipartite:
+            self.make_bipartite()
+
+        # Создаем flow network
+        flow_network = nx.DiGraph()
+
+        # Добавляем source и sink
+        source = 's'
+        sink = 't'
+
+        # Добавляем ребра от source к левой доле
+        for u in self.left:
+            flow_network.add_edge(source, u, capacity=1)
+
+        # Добавляем ребра от правой доли к sink
+        for v in self.right:
+            flow_network.add_edge(v, sink, capacity=1)
+
+        # Добавляем оригинальные ребра графа (направленные слева направо)
+        for u, v in self.graph.edges():
+            if u in self.left and v in self.right:
+                flow_network.add_edge(u, v, capacity=1)
+            elif v in self.left and u in self.right:
+                flow_network.add_edge(v, u, capacity=1)
+
+        # Вычисляем максимальный поток
+        flow_value, flow_dict = nx.maximum_flow(flow_network, source, sink)
+
+        # Извлекаем паросочетание из flow_dict
+        matching = []
+        for u in flow_dict:
+            if u == source or u == sink:
+                continue
+            for v in flow_dict[u]:
+                if v != sink and flow_dict[u][v] == 1 and u in self.left and v in self.right:
+                    matching.append((u, v))
+
+        return matching
+
+    def kuhn_algorithm(self):
+        """Реализация алгоритма Куна для поиска максимального паросочетания"""
+        if not self.is_bipartite:
+            self.make_bipartite()
+
+        # Инициализация
+        matching = {}
+        for v in self.right:
+            matching[v] = None
+
+        def dfs(u, visited):
+            """Поиск в глубину для увеличения паросочетания"""
+            for v in self.graph.neighbors(u):
+                if v not in visited:
+                    visited.add(v)
+                    if matching[v] is None or dfs(matching[v], visited):
+                        matching[v] = u
+                        return True
+            return False
+
+        # Для каждой вершины в левой доле пытаемся найти увеличивающую цепь
+        for u in self.left:
+            dfs(u, set())
+
+        # Формируем список ребер паросочетания
+        matching_edges = [(matching[v], v) for v in matching if matching[v] is not None]
+        return matching_edges
+
+    def visualize(self, matching=None, title="Graph"):
+        """Визуализация графа с возможностью выделения паросочетания"""
+        pos = {}
+
+        # Располагаем левую долю слева, правую - справа
+        left_nodes = list(self.left)
+        right_nodes = list(self.right)
+
+        for i, node in enumerate(left_nodes):
+            pos[node] = (0, -i)
+
+        for i, node in enumerate(right_nodes):
+            pos[node] = (2, -i)
+
+        # Рисуем граф
+        plt.figure(figsize=(10, 8))
+        nx.draw_networkx_nodes(self.graph, pos, nodelist=left_nodes, node_color='lightblue', node_size=500)
+        nx.draw_networkx_nodes(self.graph, pos, nodelist=right_nodes, node_color='lightgreen', node_size=500)
+
+        # Рисуем все ребра серым цветом
+        nx.draw_networkx_edges(self.graph, pos, edge_color='gray', width=1)
+
+        # Если задано паросочетание, выделяем его красным
+        if matching:
+            nx.draw_networkx_edges(self.graph, pos, edgelist=matching, edge_color='red', width=2)
+
+        # Подписываем вершины
+        nx.draw_networkx_labels(self.graph, pos)
+
+        plt.title(title)
+        plt.axis('off')
+        plt.tight_layout()  # Добавляем автоматическую настройку расположения
+        plt.show()
+
+# Исходные данные
+edges = [
+    (3, 6), (3, 9), (3, 11), (3, 12), (3, 14), (4, 5),  
+    (4, 15), (5, 14), (6, 7), (7, 10), (7, 11), (7, 14),  
+    (7, 17), (8, 9), (8, 11), (8, 17), (9, 15), (10, 13),  
+    (10, 15), (11, 13), (11, 15), (12, 13), (12, 15),  
+    (16, 17)
+]
+
+# Создаем объект графа
+bg = BipartiteGraph(edges)
+
+# 1. Проверяем, является ли граф двудольным
+is_bipartite = bg.check_bipartite()
+print(f"Граф двудольный: {is_bipartite}")
+
+if not is_bipartite:
+    # 2. Если нет, делаем его двудольным, удаляя минимальное число ребер
+    removed_edges = bg.make_bipartite()
+    print(f"Удаленные ребра для получения двудольного графа: {removed_edges}")
+    print(f"Левая доля: {bg.left}")
+    print(f"Правая доля: {bg.right}")
+
+    # Визуализируем граф после удаления ребер
+    bg.visualize(title="Граф после удаления ребер для достижения двудольности")
+
+bg.visualize(title="Двудольный граф")
+
+# 3. Находим наибольшее паросочетание алгоритмом Форда-Фалкерсона
+ff_matching = bg.ford_fulkerson()
+print(f"Наибольшее паросочетание (Форд-Фалкерсон): {ff_matching}")
+bg.visualize(ff_matching, "Наибольшее паросочетание (алгоритм Форда-Фалкерсона)")
+
+# 4. Находим наибольшее паросочетание алгоритмом Куна
+kuhn_matching = bg.kuhn_algorithm()
+print(f"Наибольшее паросочетание (Кун): {kuhn_matching}")
+bg.visualize(kuhn_matching, "Наибольшее паросочетание (алгоритм Куна)")
+
+# Сравнение результатов
+print("\nСравнение алгоритмов:")
+print(f"Размер паросочетания (Форд-Фалкерсон): {len(ff_matching)}")
+print(f"Размер паросочетания (Кун): {len(kuhn_matching)}")
